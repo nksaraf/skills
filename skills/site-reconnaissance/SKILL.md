@@ -49,19 +49,22 @@ See `reference/recon-extract-loop.md` for the framing in detail. The phases belo
 
 ### Phase 0a — Enumerate page types
 
-List every page type the scraper will need to touch. Listings sites almost always have at least these three:
+List every page type the scraper will need to touch. Most data sites are built from a few recurring archetypes — identify which ones your target has:
 
-- **Index / SRP** (`/category-in-city`, `?page=N`) — summary fields only
-- **Detail** (path with a per-item ID, e.g. `spid-`, `/p/`, `pdpid-`) — full data
-- **Dealer / seller profile** — inventory count, other listings by same seller
+- **Collection / index** (search results, category, `?page=N`, `/products.json`) — summary fields; the entry point for enumeration
+- **Detail** (path with a stable per-item ID, e.g. `/products/<handle>`, `/p/`, `spid-`) — the full record
+- **Locator** (store / branch / dealer finder — usually a map plus a geo or bbox API) — addresses, hours, coordinates
+- **Profile** (seller, brand, host) — inventory count, other items by the same entity
 
-**Rule:** if SRP URLs contain a stable per-item ID, **there's a detail page — visit it**.
+Not every site has all four: a catalog may be just collection + detail; a store finder may be just a locator.
+
+**Rule:** if collection URLs expose a stable per-item ID, **there's a detail page — visit it**.
 
 Then run Phases 0-5 once per page type.
 
 ### Phase 0 — HTTP assessment
 
-One `curl` per page type with realistic Chrome headers (UA, `Accept-Language: en-IN,...`, `Sec-Fetch-*`). Record:
+One `curl` per page type with realistic Chrome headers (UA, an `Accept-Language` matching the target's region, `Sec-Fetch-*`). Record:
 - HTTP status, server, set-cookie
 - Framework signature (see `reference/framework-signatures.md`)
 - Whether all target data is in the raw HTML (search for known values)
@@ -71,7 +74,7 @@ One `curl` per page type with realistic Chrome headers (UA, `Accept-Language: en
 
 ### Phase 1 — Browser recon (if Gate A failed)
 
-Launch stealth Playwright (`ctx.browser.newPage()` already has stealth + Indian locale). Capture:
+Launch stealth Playwright (`ctx.browser.newPage()` is stealth-by-default; locale defaults to `en-IN` / `Asia/Kolkata` — pass `{ locale, timezoneId }` to match the target's region). Capture:
 - Rendered DOM after JS executes
 - Network XHR traffic — JSON APIs at `/api/`, `/graphql`, `/_next/data/`
 - Auth headers visible on those calls
@@ -88,9 +91,14 @@ await page.goto(targetUrl, { waitUntil: "networkidle" })
 await ctx.human.pause(2000, 4000)
 const responses = capture.stop()
 for (const p of capturedToPayloads(responses)) {
-  // walkSchema(p.data) etc.
+  // p.data — the parsed JSON (feed it to walkSchema)
+  // p.url  — the FULL request URL incl. api_key + params. KEEP THIS: it's what
+  //          lets you replay the call with ctx.fetch and drop the browser
+  //          (the Tier 3 → Tier 2 downgrade). p.source is truncated for display.
 }
 ```
+
+> **Tip:** filter out third-party map/tile vendors (`mapbox`, `googleapis`, `tile`, `cdn`) before ranking endpoints — they carry `address`-shaped keys (sprite names, layer labels) and produce false positives in the geo/addr heuristics.
 
 See `patterns/xhr-and-partial-html.md` for the full recipe, the protected-site warmup pattern, and how to downgrade from Tier 3 (browser) to Tier 2 (direct API call) once you've identified the canonical endpoint.
 
@@ -106,7 +114,7 @@ For each claimed selector / JSON path / API endpoint, run an actual extraction t
 
 ### Phase 4 — Protection profile (conditional)
 
-Run only if you saw protection signals or the site is on the high-protection list (LinkedIn, MakeMyTrip, NoBroker, Housing.com).
+Run only if you saw protection signals, or the site runs a known anti-bot stack (Akamai, Imperva, Cloudflare, DataDome, PerimeterX). See `patterns/protection-profiles.md` for the stacks we've profiled and `sites/INDEX.md` for specific sites flagged high-protection.
 
 Escalate: Raw HTTP → Stealth browser → Residential proxy → TLS fingerprint spoofing. Stop when access is confirmed.
 
@@ -193,24 +201,26 @@ const all = extractAllHydrationPayloads(html)
 // Each entry has { source, data } — could be window.X, JSON-LD, __NEXT_DATA__, etc.
 for (const p of all) {
   const leaves = walkSchema(p.data, { arraySampleSize: 2, maxDepth: 8 })
+  // Bucket by the field families YOUR target should expose — adapt these keywords
+  // to the domain (catalog, locator, listings, …).
   ctx.log.info(p.source, {
     total: leaves.length,
-    pricing: filterLeaves(leaves, ["price","rent","deposit"]).length,
-    geo: filterLeaves(leaves, ["latitude","longitude"]).length,
-    spec: filterLeaves(leaves, ["floor","wash","amen","furnish"]).length,
-    meta: filterLeaves(leaves, ["verified","featured","status","posted","updated"]).length,
+    pricing: filterLeaves(leaves, ["price","amount","cost","currency"]).length,
+    geo: filterLeaves(leaves, ["lat","lng","latitude","longitude","coordinate"]).length,
+    identity: filterLeaves(leaves, ["id","sku","name","title","handle"]).length,
+    meta: filterLeaves(leaves, ["available","status","stock","rating","updated"]).length,
   })
 }
 ```
 
-Use the bucket counts as a navigation tool: if `meta` is 0 you missed a field type; if `pricing` is 30 you should pick the canonical one.
+Use the bucket counts as a navigation tool: if a bucket you expect is 0 you missed a field type; if `pricing` is 30 you should pick the canonical one.
 
 ## What goes in the site addendum
 
 When you finish recon on a site, write `sites/<site>.md` using the template in `sites/INDEX.md`. Future recon (yours or someone else's) starts there.
 
 Minimum to capture:
-- URL patterns (SRP, detail, others)
+- URL patterns (collection, detail, locator, others)
 - Framework + tier
 - Hydration payload location + key paths
 - Protection profile
