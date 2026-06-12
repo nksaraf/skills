@@ -27,7 +27,7 @@ bun add @vinxi/scraper
 bun add -d playwright && bunx playwright install chromium   # for browser-tier sites
 ```
 
-Conventions in your project: scrapers live in `scrapers/<site>.ts`, output streams to `data/results/<site>.jsonl`. Run with `bunx vinxi-scraper run <site>`, inspect with `bunx vinxi-scraper export <site> --format json`. The recon helpers (`walkSchema`, `startXhrCapture`, `auditPage`, `scoreCard`, …) import from `@vinxi/scraper/recon`.
+Conventions in your project: scrapers live in `scrapers/<site>.ts`, output streams to `data/results/<site>/latest.jsonl` (each run is timestamped; `latest.jsonl` points at the newest successful run). Run with `bunx vinxi-scraper run <site>`, inspect with `bunx vinxi-scraper export <site> --format json`. The recon helpers (`walkSchema`, `startXhrCapture`, `auditPage`, `scoreCard`, …) import from `@vinxi/scraper/recon`.
 
 ## First: check the case library
 
@@ -139,6 +139,8 @@ Escalate: Raw HTTP → Stealth browser → Residential proxy → TLS fingerprint
 ### Phase 6 — Validation scorecard (MANDATORY before declaring done)
 
 A scrape that ran without errors is not the same as a scrape with good data. Phase 6 produces a numeric scorecard across four dimensions: **Completeness**, **Data Quality**, **Source Authenticity**, **Freshness**. Each is 0-100 with weighted evidence.
+
+> **Scope:** `scoreCard()` is for **store-locator / geo** cohorts — it scores coordinate coverage, address completeness, metro spread. Build inputs with `makeRetailStore()` from `@vinxi/scraper/retail`. A **product catalog** (SKUs, prices, variants) has no geographic scorecard — validate it instead by sampling field coverage (% with price, % with barcode, in-stock %) and reconciling the count against the source's own total. Phase 6 / Gate E still applies in spirit (don't ship un-validated data) — just with catalog-appropriate checks.
 
 See `patterns/validation-scorecard.md` for the full pattern and `reference/recon-extract-loop.md` for why this isn't optional. Specific things the scorecard has caught in past sessions:
 
